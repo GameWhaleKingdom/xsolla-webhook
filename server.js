@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -12,22 +11,20 @@ const PROJECT_ID = process.env.XSOLLA_PROJECT_ID;
 const API_KEY = process.env.XSOLLA_API_KEY;
 const WEBHOOK_SECRET = process.env.XSOLLA_WEBHOOK_SECRET;
 
-// صفحة الاختبار
 app.get('/', (req, res) => {
     res.send('✅ السيرفر شغال!');
 });
 
-// 🔑 توليد Token (المفقود)
 app.post('/generate-token', async (req, res) => {
     const { user_id, item_sku } = req.body;
-    
+
     if (!user_id || !item_sku) {
         return res.status(400).json({ error: 'Missing user_id or item_sku' });
     }
 
     try {
         const auth = Buffer.from(`${PROJECT_ID}:${API_KEY}`).toString('base64');
-        
+
         const response = await axios.post(
             `https://api.xsolla.com/merchant/v2/merchants/${PROJECT_ID}/token`,
             {
@@ -50,7 +47,6 @@ app.post('/generate-token', async (req, res) => {
     }
 });
 
-// Webhook
 app.post('/webhook', (req, res) => {
     const notification_type = req.body.notification_type;
     console.log('Webhook received:', notification_type);
