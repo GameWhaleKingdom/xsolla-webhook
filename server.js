@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -12,21 +13,25 @@ const API_KEY = process.env.XSOLLA_API_KEY;
 const WEBHOOK_SECRET = process.env.XSOLLA_WEBHOOK_SECRET;
 
 // ================================================================
-// 🛡️ قاعدة بيانات الحماية (في الذاكرة)
+// 🛡️ نظام الحماية (PIN + Daily Limit)
 // ================================================================
-let securityDB = {}; // { userId: { pin, dailySpent, lastDate } }
+let securityDB = {};
 
-// 1. تعيين الرمز السري
 app.post('/set-pin', (req, res) => {
     const { userId, pin } = req.body;
+    if (!userId || !pin) {
+        return res.status(400).json({ error: 'userId and pin required' });
+    }
     if (!securityDB[userId]) securityDB[userId] = {};
     securityDB[userId].pin = pin;
     res.json({ success: true, message: 'تم تعيين الرمز السري' });
 });
 
-// 2. التحقق من الرمز السري
 app.post('/verify-pin', (req, res) => {
     const { userId, pin } = req.body;
+    if (!userId || !pin) {
+        return res.status(400).json({ error: 'userId and pin required' });
+    }
     const user = securityDB[userId];
     if (!user || !user.pin) {
         return res.json({ valid: false, message: 'لم يتم تعيين رمز سري بعد' });
@@ -38,7 +43,6 @@ app.post('/verify-pin', (req, res) => {
     }
 });
 
-// 3. التحقق من الحد اليومي
 app.post('/check-limit', (req, res) => {
     const { userId, amount } = req.body;
     const today = new Date().toDateString();
@@ -67,7 +71,6 @@ app.post('/check-limit', (req, res) => {
     });
 });
 
-// 4. تسجيل الإنفاق بعد الشراء الناجح
 app.post('/record-spending', (req, res) => {
     const { userId, amount } = req.body;
     const today = new Date().toDateString();
@@ -83,7 +86,6 @@ app.post('/record-spending', (req, res) => {
     res.json({ success: true, dailySpent: user.dailySpent });
 });
 
-// 5. الحصول على حالة الحماية
 app.get('/security-status/:userId', (req, res) => {
     const userId = req.params.userId;
     const today = new Date().toDateString();
@@ -101,7 +103,74 @@ app.get('/security-status/:userId', (req, res) => {
 });
 
 // ================================================================
-// المسارات الأساسية
+// 💳 نظام الدفع الآمن (Webhook + Payment Status)
+// ================================================================
+const paymentRecords = {};
+
+app.post('/webhook', express.json(), (req, res) => {
+    const xsollaSign = req.headers['authorization'];
+    const body = JSON.stringify(req.body);
+    const expected = 'Signature ' + crypto
+        .createHash('sha1')
+        .update(body + WEBHOOK_SECRET)
+        .digest('hex');
+
+    if (xsollaSign !== expected) {
+        console.warn('[webhook] ❌ توقيع غير صحيح');
+        return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    const { notification_type, user, purchase, order } = req.body;
+
+    if (notification_type === 'payment') {
+        const userId = user?.id;
+        const sku = purchase?.virtual_items?.items?.[0]?.sku || '';
+        const orderId = order?.id;
+
+        const skuToTier = {
+            'gems_100': 'paid',
+            'gems_500': 'vip',
+            'vip_monthly': 'vip',
+            'vip_yearly': 'whale',
+            'dev_support': 'paid'
+        };
+        const tier = skuToTier[sku] || 'paid';
+
+        if (userId) {
+            const existing = paymentRecords[userId];
+            const tierOrder = ['free', 'paid', 'vip', 'whale'];
+            const shouldUpgrade = !existing ||
+                tierOrder.indexOf(tier) > tierOrder.indexOf(existing.tier);
+
+            if (shouldUpgrade) {
+                paymentRecords[userId] = { tier, orderId, paidAt: Date.now() };
+                console.log(`[webhook] ✅ تم ترقية المستخدم ${userId} إلى ${tier}`);
+            }
+        }
+    }
+
+    res.status(200).json({ success: true });
+});
+
+app.get('/payment-status', (req, res) => {
+    const userId = req.query.user_id;
+    if (!userId) return res.status(400).json({ error: 'user_id مطلوب' });
+
+    const record = paymentRecords[userId];
+    if (record) {
+        return res.json({
+            paid: true,
+            tier: record.tier,
+            orderId: record.orderId,
+            paidAt: record.paidAt
+        });
+    }
+
+    return res.json({ paid: false, tier: 'free' });
+});
+
+// ================================================================
+// 🚀 المسارات الأساسية
 // ================================================================
 app.get('/', (req, res) => {
     res.send('✅ السيرفر شغال!');
@@ -135,15 +204,10 @@ app.post('/generate-token', async (req, res) => {
     }
 });
 
-app.post('/webhook', (req, res) => {
-    console.log('📥 Webhook received:', req.body);
-    res.status(200).json({ status: 'ok' });
-});
-
 // ================================================================
 // تشغيل السيرفر
 // ================================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`✅ Server running on port ${PORT}`);
 });
