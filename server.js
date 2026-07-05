@@ -181,8 +181,10 @@ app.post('/generate-token', async (req, res) => {
     if (!user_id || !item_sku) {
         return res.status(400).json({ error: 'Missing user_id or item_sku' });
     }
+
     try {
         const auth = Buffer.from(`${PROJECT_ID}:${API_KEY}`).toString('base64');
+
         const response = await axios.post(
             `https://api.xsolla.com/merchant/v2/merchants/${PROJECT_ID}/token`,
             {
@@ -197,6 +199,7 @@ app.post('/generate-token', async (req, res) => {
                 }
             }
         );
+
         res.json({ token: response.data.token });
     } catch (error) {
         console.error('Xsolla Error:', error.response?.data || error.message);
